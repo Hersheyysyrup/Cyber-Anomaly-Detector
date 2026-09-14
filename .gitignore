@@ -1,2 +1,3 @@
 # Dataset
-data/*.csv
+data/raw/
+data/processed/
