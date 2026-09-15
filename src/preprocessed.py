@@ -92,5 +92,75 @@ def load_csv(raw_dir: Path) -> pd.DataFrame:
 
     return combined
 
+### Column Name Cleaning ###
+def clean_values(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    remove duplicate rows,
+    remove empty columns,
+    convert infinity values to NA,
+    remove missing values
+    """
 
+    print_section("CLEANING DATA")
+
+    df = df.copy()
+
+    original_rows = len(df)
+    original_columns = len(df.columns)
+
+    df = df.replace(
+        [np.inf, -np.inf], #Infinity to NA
+        np.nan
+    )
+
+    empty_columns = [
+        column                      #removes empty columns
+        for column in df.columns
+        if df[column].isna().all()
+    ]
+
+    if empty_columns:
+
+        print(
+            f"Dropping {len(empty_columns)} completely empty columns:"
+        )
+
+        for column in empty_columns:
+            print(f"  - {column}")
+
+        df = df.drop(columns=empty_columns)
+
+    before = len(df)        #remove missing values
+    df = df.dropna()
+
+    dropped_nan = before - len(df)
+
+    print(
+        f"Dropped rows containing NaN/inf: "
+        f"{dropped_nan:,}"
+    )
+
+    #remove duplicate rows
+
+    before = len(df)
+    df = df.drop_duplicates()
+
+    dropped_duplicates = before - len(df)
+
+    print(
+        f"Dropped duplicate rows: "
+        f"{dropped_duplicates:,}"
+    )
+
+    print(
+        f"\nRows: "
+        f"{original_rows:,} -> {len(df):,}"
+    )
+
+    print(
+        f"Columns: "
+        f"{original_columns} -> {len(df.columns)}"
+    )
+
+    return df
 
