@@ -1,166 +1,139 @@
+import glob
 import os
-import warnings
-import joblib
-import json
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
-random_state = 42
-test_size = 0.20
-project_root = Path(__file__).resolve().parent.parent
+RAW_DIR = "data/raw"
+PROCESSED_DIR = "data/processed"
+RANDOM_STATE = 42
+TEST_SIZE = 0.2
 
-raw_dir = project_root/"data"/"processed"
-processed_dir = project_root/ "data" / "processed"
+FILE_PATTERN = "*_plus.csv"
 
-file_pattern = "*_plus.csv"
+def load_all_csvs(raw_dir: str) -> pd.DataFrame:
+    """Load and concatenate all the files into one DataFrame"""
 
-Identifier_Columns = {
-    "flow id",
-    "source ip",
-    "destination ip",
-    "timestamp",
-}
-
-Target_Columns = {
-    "label",
-    "label_binary",
-    "label_multiclass",
-}
-
-def normalize_column_name(column: str) -> str:
-
-    ### To normalize a column make everything equal
-    return " ".join(str(column).strip().lower().split())
-
-def print_section(title: str):
-    """Print a readable section heading."""
-    print("\n" + "=" * 70)
-    print(title)
-    print("=" * 70)
-
-
-###Data Loading###
-
-def load_csv(raw_dir: Path) -> pd.DataFrame:
-
-    if not raw_dir.exists():
+    csv_paths = glob.glob(os.path.join(raw_dir, FILE_PATTERN))
+    if not csv_paths:
         raise FileNotFoundError(
-            f"Raw data directory does not exist:\n{raw_dir}"
-        )
+            f"No files matching {FILE_PATTERN} found in {raw_dir}. "
+            f"Check that your '_plus' CSVs are in that folder.")
 
-    csv_files = sorted(raw_dir.glob(file_pattern))
-
-    if not csv_files:
-        raise FileNotFoundError(
-            f"No files matching '{file_pattern}' found in:\n{raw_dir}\n\n"
-            "data/raw/."
-        )
-
-    print_section("LOADING DATA")
-    print(f"Found {len(csv_files)} dataset files:")
+    print(
+        f"Found {len(csv_paths)} files:")
+    for p in csv_paths:
+        print(f"  - {os.path.basename(p)}")
 
     frames = []
-
-    for file in csv_files:
-
-        try:
-            df = pd.read_csv(file, low_memory = False)
-
-        except Exception as exc:
-            raise RuntimeError(
-                f"Unable to read file: {file}\n{exc}"
-            )from exc
-
-        print(
-            f"  {file.name:<30} "
-            f"{len(df):>10,} rows | "
-            f"{len(df.columns):>3} columns"
-        )
-
+    for path in csv_paths:
+        print(f"Loading {path}...")
+        df = pd.read_csv(path, low_memory= False)
         frames.append(df)
 
-    combined = pd.concat(
-        frames,
-        ignore_index= True,
-        sort = False,
-    )
+    full_df = df.concat(frames, ignore_index = True)
+    print(f"\nCombined shape: {full_df.shape}")
+    return full_df
 
-    print(f"\nCombined dataset shape: {combined.shape}")
+def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """remove whitespaces from column names"""
 
-    return combined
+    df.columns = [c.strip() for c in df.columns]
+    return df
 
-### Column Name Cleaning ###
-def clean_values(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    remove duplicate rows,
-    remove empty columns,
-    convert infinity values to NA,
-    remove missing values
-    """
+def clean_values (df: pd.DataFrame) -> pd.DataFrame:
+    """Removes infinity, null values and duplicate rows"""
 
-    print_section("CLEANING DATA")
-
-    df = df.copy()
-
-    original_rows = len(df)
-    original_columns = len(df.columns)
-
-    df = df.replace(
-        [np.inf, -np.inf], #Infinity to NA
-        np.nan
-    )
-
-    empty_columns = [
-        column                      #removes empty columns
-        for column in df.columns
-        if df[column].isna().all()
-    ]
-
-    if empty_columns:
-
-        print(
-            f"Dropping {len(empty_columns)} completely empty columns:"
-        )
-
-        for column in empty_columns:
-            print(f"  - {column}")
-
-        df = df.drop(columns=empty_columns)
-
-    before = len(df)        #remove missing values
-    df = df.dropna()
-
-    dropped_nan = before - len(df)
-
-    print(
-        f"Dropped rows containing NaN/inf: "
-        f"{dropped_nan:,}"
-    )
-
-    #remove duplicate rows
-
+    df = df.replac([np.inf, -np.inf], np.nan)
     before = len(df)
     df = df.drop_duplicates()
-
-    dropped_duplicates = before - len(df)
-
-    print(
-        f"Dropped duplicate rows: "
-        f"{dropped_duplicates:,}"
-    )
-
-    print(
-        f"\nRows: "
-        f"{original_rows:,} -> {len(df):,}"
-    )
-
-    print(
-        f"Columns: "
-        f"{original_columns} -> {len(df.columns)}"
-    )
+    print(f"Dropped {before - len(df)} duplicate rows")
 
     return df
+
+def build_labels(df: pd.DataFrame):
+    """create binary and multiclass columns"""
+    label_col_candidates = [c for c in df.columns if c.lower() == "label"]
+    if not label_col_candidates:
+        raise KeyError(
+            f"Couldn't find a 'Label' column. Columns present: {list(df.columns)}"
+        )
+
+    label_col = label_col_candidates[0]
+
+    df["label_col"] = df[label_col].astype(str).str.strip()
+    df["label_multiclass"] = df[label_col]
+    df["label_binary"] = (df[label_col].str.upper() != "BENIGN").astype(int)
+
+    print("\nClass distribution (binary):")
+    print(df["label_binary"].value_counts(normalize = True))
+
+    print("\nClass distribution (binary):")
+    print(df["label_multiclass"].value_counts())
+
+    #Flag id SQL injection is present 
+
+    sql_mask = df["label_multiclass"].str.contauns("sql", case = False, na=False)
+    print(f"\nSQL Injection rows found: {sql_mask.sum()}")
+
+    return df, label_col
+
+def split_features_labels(df: pd.DataFrame, label_col: str):
+    """to seperate features from feature columns"""
+
+    label_cols = [label_col, "label_multiclass", "label_binary"]
+    feature_cols = [c for c in df.columns if c not in label_cols]
+
+    numeric_cols = df[feature_cols].select_dtypes(include =[np.number]).columns.tolist()
+    dropped = set(feature_cols) - set(numeric_cols)
+    if dropped:
+        print(f"\mDropping non numeric feature columns: {dropped}")
+
+
+    X = df[numeric_cols].copy()
+    y_binary = df["label_binary"].copy()
+    y_multiclass = df["label_multiclass"].copy()
+
+    return X, y_binary, y_multiclass
+
+
+def main():
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
+
+    df = load_all_csvs(RAW_DIR)
+    df = clean_columns(df)
+    df = clean_values(df)
+    df , label_col = build_labels(df)
+
+    X, y_binary, y_multiclass = split_features_labels(df, label_col)
+ 
+    X_train, X_test, yb_train, yb_test, ym_train, ym_test = train_test_split(
+        X, y_binary, y_multiclass,
+        test_size=TEST_SIZE,
+        random_state=RANDOM_STATE,
+        stratify=y_binary,
+    )
+
+    #Feature Scaling(Train only )
+    scaler = StandardScaler()
+    X_train_scaled = pd.DataFrame(
+        scaler.fit_transform(X_train), columns = X_train.columns, index = X_train.index
+    )
+    X_test_scaled = pd.DataFrame(
+        scaler.transform(X_test), column = X_test.columns, index = X_test.index)
+    
+    X_train_scaled.to_csv(f"{PROCESSED_DIR}/X_train.csv", index=False)
+    X_test_scaled.to_csv(f"{PROCESSED_DIR}/X_test.csv", index=False)
+    yb_train.to_csv(f"{PROCESSED_DIR}/y_train_binary.csv", index=False)
+    yb_test.to_csv(f"{PROCESSED_DIR}/y_test_binary.csv", index=False)
+    ym_train.to_csv(f"{PROCESSED_DIR}/y_train_multiclass.csv", index=False)
+    ym_test.to_csv(f"{PROCESSED_DIR}/y_test_multiclass.csv", index=False)
+
+    print(f"\nSaved processed data to {PROCESSED_DIR}/")
+    print(f"Train shape: {X_train_scaled.shape}, Test shape: {X_test_scaled.shape}")
+ 
+ 
+if __name__ == "__main__":
+    main()
 
