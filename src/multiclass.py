@@ -90,7 +90,7 @@ def train_xgboost(X_train, y_train_enc, n_classes):
         n_jobs=-1,
     )
     ###since xgboost doesn't have a built in class weight for multiclass like random forest
-    ###therefore we are computing per row sample weights manually to achieve the same balancing effects
+    ###therefore we are computing per row sample weights manually to achieve the same balancing
     sample_weights = compute_sample_weight(class_weight="balanced", y=y_train_enc)
     xgb.fit(X_train, y_train_enc, sample_weight=sample_weights)
     return xgb
