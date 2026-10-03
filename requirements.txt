@@ -5,3 +5,9 @@ xgboost
 matplotlib
 seaborn
 imbalanced-learn
+joblib
+glob
+
+"""Build an anomaly detection system for identifying cyber threats by combining
+clustering algorithms to label data and supervised models for classification, analyzing the overall
+robustness of the approach"""

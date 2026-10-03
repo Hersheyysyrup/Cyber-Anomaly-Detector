@@ -29,10 +29,10 @@ def load_all_csvs(raw_dir: str) -> pd.DataFrame:
     frames = []
     for path in csv_paths:
         print(f"Loading {path}...")
-        df = pd.read_csv(path, low_memory= False)
+        df = pd.read_csv(path, low_memory=False)
         frames.append(df)
 
-    full_df = df.concat(frames, ignore_index = True)
+    full_df = pd.concat(frames, ignore_index=True)
     print(f"\nCombined shape: {full_df.shape}")
     return full_df
 
@@ -42,10 +42,14 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [c.strip() for c in df.columns]
     return df
 
-def clean_values (df: pd.DataFrame) -> pd.DataFrame:
+def clean_values(df: pd.DataFrame) -> pd.DataFrame:
     """Removes infinity, null values and duplicate rows"""
 
-    df = df.replac([np.inf, -np.inf], np.nan)
+    df = df.replace([np.inf, -np.inf], np.nan)
+    before = len(df)
+    df = df.dropna()
+    print(f"Dropped {before - len(df)} rows with NaN/inf values")
+
     before = len(df)
     df = df.drop_duplicates()
     print(f"Dropped {before - len(df)} duplicate rows")
@@ -62,19 +66,19 @@ def build_labels(df: pd.DataFrame):
 
     label_col = label_col_candidates[0]
 
-    df["label_col"] = df[label_col].astype(str).str.strip()
+    df[label_col] = df[label_col].astype(str).str.strip()
     df["label_multiclass"] = df[label_col]
     df["label_binary"] = (df[label_col].str.upper() != "BENIGN").astype(int)
 
     print("\nClass distribution (binary):")
-    print(df["label_binary"].value_counts(normalize = True))
+    print(df["label_binary"].value_counts(normalize=True))
 
-    print("\nClass distribution (binary):")
+    print("\nClass distribution (multi-class):")
     print(df["label_multiclass"].value_counts())
 
-    #Flag id SQL injection is present 
+    # Flag if SQL injection is present
 
-    sql_mask = df["label_multiclass"].str.contauns("sql", case = False, na=False)
+    sql_mask = df["label_multiclass"].str.contains("sql", case=False, na=False)
     print(f"\nSQL Injection rows found: {sql_mask.sum()}")
 
     return df, label_col
@@ -85,11 +89,10 @@ def split_features_labels(df: pd.DataFrame, label_col: str):
     label_cols = [label_col, "label_multiclass", "label_binary"]
     feature_cols = [c for c in df.columns if c not in label_cols]
 
-    numeric_cols = df[feature_cols].select_dtypes(include =[np.number]).columns.tolist()
+    numeric_cols = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
     dropped = set(feature_cols) - set(numeric_cols)
     if dropped:
-        print(f"\mDropping non numeric feature columns: {dropped}")
-
+        print(f"\nDropping non numeric feature columns: {dropped}")
 
     X = df[numeric_cols].copy()
     y_binary = df["label_binary"].copy()
@@ -104,10 +107,10 @@ def main():
     df = load_all_csvs(RAW_DIR)
     df = clean_columns(df)
     df = clean_values(df)
-    df , label_col = build_labels(df)
+    df, label_col = build_labels(df)
 
     X, y_binary, y_multiclass = split_features_labels(df, label_col)
- 
+
     X_train, X_test, yb_train, yb_test, ym_train, ym_test = train_test_split(
         X, y_binary, y_multiclass,
         test_size=TEST_SIZE,
@@ -115,14 +118,14 @@ def main():
         stratify=y_binary,
     )
 
-    #Feature Scaling(Train only )
+    # Feature Scaling (Train only)
     scaler = StandardScaler()
     X_train_scaled = pd.DataFrame(
-        scaler.fit_transform(X_train), columns = X_train.columns, index = X_train.index
+        scaler.fit_transform(X_train), columns=X_train.columns, index=X_train.index
     )
     X_test_scaled = pd.DataFrame(
-        scaler.transform(X_test), column = X_test.columns, index = X_test.index)
-    
+        scaler.transform(X_test), columns=X_test.columns, index=X_test.index)
+
     X_train_scaled.to_csv(f"{PROCESSED_DIR}/X_train.csv", index=False)
     X_test_scaled.to_csv(f"{PROCESSED_DIR}/X_test.csv", index=False)
     yb_train.to_csv(f"{PROCESSED_DIR}/y_train_binary.csv", index=False)
@@ -132,8 +135,7 @@ def main():
 
     print(f"\nSaved processed data to {PROCESSED_DIR}/")
     print(f"Train shape: {X_train_scaled.shape}, Test shape: {X_test_scaled.shape}")
- 
- 
+
+
 if __name__ == "__main__":
     main()
-
