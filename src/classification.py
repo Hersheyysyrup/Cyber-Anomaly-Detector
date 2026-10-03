@@ -14,7 +14,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     auc,
 )
-from xgboost import XGBClassifer
+from xgboost import XGBClassifier
 
 PROCESSED_DIR = "data/processed"
 MODEL_DIR = "outputs/models"
@@ -46,7 +46,7 @@ def train_random_forest(X_train, y_train):
         n_jobs=-1,
         class_weight="balanced",  # helps with the imbalance we still have even after filtering
     )
-    randomforest.fit(X_train. y_train)
+    randomforest.fit(X_train, y_train)
     return randomforest
 
 def train_xgboost(X_train, y_train):
@@ -54,7 +54,7 @@ def train_xgboost(X_train, y_train):
     n_pos = (y_train == 1).sum()
     scale_pos_weight = n_neg /max(n_pos , 1)
 
-    xgb = XGBClassifer(
+    xgb = XGBClassifier(
     n_estimators = 200,
     random_state = RANDOM_STATE,
     scale_pos_weight = scale_pos_weight,

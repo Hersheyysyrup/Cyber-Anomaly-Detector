@@ -1,23 +1,26 @@
-# run k means clustering - it partitions traffic into groups typically anonmaly and fine
-# run dbscan - it also does the same job but intead its working on density here
+# run k means clustering - it partitions traffic into groups typically anomaly and fine
+# run isolation forest - also unsupervised, but isolates anomalies by how FEW random
+# splits it takes to separate a point from the rest (anomalies isolate faster)
 # after comparing the 2 the mutual voted row is selected and other is dropped
-# they vote on whether network traffic anomalous or normal
-# this would help us in robustness 
-# once this files runs k means precision/recall vs real labels and 
-# Dbscan;s precision/recall vs real labels 
+# they vote on whether network traffic is anomalous or normal
+# this would help us in robustness
+# once this file runs: k means precision/recall vs real labels and
+# isolation forest's precision/recall vs real labels
 
-import os 
+import os
 import numpy as np
 import pandas as pd
-from sklearn.cluster import KMeans, DBSCAN
+from sklearn.cluster import KMeans
+from sklearn.ensemble import IsolationForest
 from sklearn.metrics import classification_report, confusion_matrix
 
 PROCESSED_DIR = "data/processed"
 RANDOM_STATE = 42
 
-DBSCAN_SUBSAMPLE = None
-DBSCAN_EPS = 1.5
-DBSCAN_MIN_SAMPLES = 10
+# Rough expected anomaly proportion in the data — adjust this based on the
+# actual binary class distribution printed during preprocessing.
+# Our data came out ~24.5% attack, so we set contamination close to that.
+CONTAMINATION = 0.245
 
 
 def load_processed():
@@ -28,7 +31,7 @@ def load_processed():
 
 
 def run_kmeans(X: pd.DataFrame, n_clusters: int = 2) -> np.ndarray:
-    """since attacks are very less likely to occur using small clusters to represent attack"""
+    """since attacks are less likely to occur, treating the smaller cluster as the attack one"""
     km = KMeans(n_clusters=n_clusters, random_state=RANDOM_STATE, n_init=10)
     raw_labels = km.fit_predict(X)
 
@@ -42,30 +45,23 @@ def run_kmeans(X: pd.DataFrame, n_clusters: int = 2) -> np.ndarray:
     return pseudo_labels
 
 
-def run_dbscan(X: pd.DataFrame, eps: float = DBSCAN_EPS, min_samples: int = DBSCAN_MIN_SAMPLES) -> np.ndarray:
-    """since db scan points as -1 we will be treating anomalities as noice cuz the point doesnt fit densely 
-    into any normal traffic cluster"""
-    data = X
-    if DBSCAN_SUBSAMPLE and len(X) > DBSCAN_SUBSAMPLE:
-        print(f"Subsampling {DBSCAN_SUBSAMPLE} rows for DBSCAN (full data too slow)")
+def run_isolation_forest(X: pd.DataFrame, contamination: float = CONTAMINATION) -> np.ndarray:
+    """
+    isolation forest natively outputs -1 for anomalies, 1 for normal points.
+    we convert that to 0/1 so it matches k-means' convention (1 = anomalous).
+    scales fine to millions of rows, unlike dbscan - no subsampling needed.
+    """
+    iso = IsolationForest(
+        contamination=contamination,
+        random_state=RANDOM_STATE,
+        n_jobs=-1,
+    )
+    raw_labels = iso.fit_predict(X)
+    pseudo_labels = (raw_labels == -1).astype(int)
 
-        data = X.sample(DBSCAN_SUBSAMPLE, random_state=RANDOM_STATE)
-
-    db = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1)
-    raw_labels = db.fit_predict(data)
-    pseudo_labels = pd.Series((raw_labels == -1).astype(int), index=data.index)
-
-    n_noise = pseudo_labels.sum()
-    n_clusters = len(set(raw_labels)) - (1 if -1 in raw_labels else 0)
-    print(f"DBSCAN found {n_clusters} clusters, flagged {n_noise} noise/anomalous points "
-          f"out of {len(data)}")
-
-    if DBSCAN_SUBSAMPLE and len(X) > DBSCAN_SUBSAMPLE:
-        full_labels = pd.Series(0, index=X.index)
-        full_labels.loc[pseudo_labels.index] = pseudo_labels
-        return full_labels.values
-
-    return pseudo_labels.values
+    print(f"Isolation Forest flagged {pseudo_labels.sum()} points as anomalous "
+          f"out of {len(X)}")
+    return pseudo_labels
 
 
 def evaluate_against_ground_truth(pseudo_labels: np.ndarray, y_true: pd.Series, method_name: str):
@@ -85,19 +81,19 @@ def main():
     evaluate_against_ground_truth(km_labels, y_train_binary, "K-Means")
 
     print("\n" + "=" * 60)
-    print("Running DBSCAN")
+    print("Running Isolation Forest")
     print("=" * 60)
-    db_labels = run_dbscan(X_train)
-    evaluate_against_ground_truth(db_labels, y_train_binary, "DBSCAN")
+    iso_labels = run_isolation_forest(X_train)
+    evaluate_against_ground_truth(iso_labels, y_train_binary, "Isolation Forest")
 
     # now we have to combine rows where both methods are mutual
-    agreement_mask = km_labels == db_labels
+    agreement_mask = km_labels == iso_labels
     combined_labels = km_labels
 
     print("\n" + "=" * 60)
     print("Combined results")
     print("=" * 60)
-    print(f"Agreement between K-Means and DBSCAN: "
+    print(f"Agreement between K-Means and Isolation Forest: "
           f"{agreement_mask.sum()} / {len(agreement_mask)} "
           f"({100 * agreement_mask.mean():.1f}%)")
 
@@ -107,7 +103,7 @@ def main():
 
     out = pd.DataFrame({
         "kmeans_label": km_labels,
-        "dbscan_label": db_labels,
+        "isoforest_label": iso_labels,
         "pseudo_label": combined_labels,
         "agree": agreement_mask,
     })
