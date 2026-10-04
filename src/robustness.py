@@ -24,6 +24,7 @@ os.makedirs(METRICS_DIR, exist_ok=True)
 
 NOISE_LEVELS = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
 CORRUPTION_LEVELS = [0.0, 0.05, 0.10, 0.20, 0.30]
+DRIFT_LEVELS = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5]
 N_ESTIMATORS = 100
 
 
@@ -119,11 +120,10 @@ def run_noise_injection_test():
     print(f"Saved plot to {PLOT_DIR}/noise_injection_prauc.png")
 
 
-# TEST 2 Label Noise Sensitivity 
-# we deliberately corrupt (flip) a percentage of the pseudo-labels that
+# TEST 2 Label Noise Sensitivity
+# we deliberately corrupt a percentage of the pseudo-labels that
 # classify.py trains on, retrain at each corruption level, and see how much
 # performance against the REAL test labels degrades. this tells us how much
-# the whole pipeline depends on clustering having produced good labels.
 
 def load_training_data():
     X_train = pd.read_csv(f"{PROCESSED_DIR}/X_train.csv")
@@ -258,6 +258,101 @@ def run_label_noise_test():
     print(f"Saved plot to {PLOT_DIR}/label_noise_prauc.png")
 
 
+# TEST 3 - CONCEPT DRIFT SIMULATION
+# unlike noise injection it is systematic, directional feature shifting,
+# simulating distribution change over real time. drift is simulated
+# synthetically and models are NOT retrained here, since real temporal
+# data isn't available after preprocessing dropped the Timestamp column.
+
+def get_drift_direction(X: pd.DataFrame, rng: np.random.RandomState) -> np.ndarray:
+    return rng.choice([-1, 1], size=X.shape[1])
+
+
+def apply_drift(X: pd.DataFrame, drift_level: float, direction: np.ndarray) -> pd.DataFrame:
+    """this shifts every feature by drift_level * its std dev, in a fixed direction"""
+    if drift_level == 0.0:
+        return X.copy()
+
+    stds = X.std(axis=0).values
+    shift = stds * drift_level * direction
+    return X + shift
+
+
+def evaluate_at_drift_level(model, X_test, y_test, drift_level, direction):
+    X_drifted = apply_drift(X_test, drift_level, direction)
+
+    y_pred = model.predict(X_drifted)
+    y_proba = model.predict_proba(X_drifted)[:, 1]
+
+    f1 = f1_score(y_test, y_pred, pos_label=1)
+    precision, recall, _ = precision_recall_curve(y_test, y_proba)
+    pr_auc = auc(recall, precision)
+
+    return f1, pr_auc
+
+
+def run_concept_drift_test():
+    print("\n" + "#" * 60)
+    print("# TEST 3: CONCEPT DRIFT SIMULATION")
+    print("#" * 60)
+
+    rng = np.random.RandomState(RANDOM_STATE)
+
+    X_test, y_test = load_test_data()
+    models = load_models()
+
+    direction = get_drift_direction(X_test, rng)
+
+    results = {name: {"f1": [], "pr_auc": []} for name in models}
+
+    for level in DRIFT_LEVELS:
+        print(f"\n--- Drift level: {level} ---")
+        for name, model in models.items():
+            f1, pr_auc = evaluate_at_drift_level(model, X_test, y_test, level, direction)
+            results[name]["f1"].append(f1)
+            results[name]["pr_auc"].append(pr_auc)
+            print(f"{name}: F1={f1:.4f}, PR-AUC={pr_auc:.4f}")
+
+    out_rows = []
+    for name in models:
+        for i, level in enumerate(DRIFT_LEVELS):
+            out_rows.append({
+                "model": name,
+                "drift_level": level,
+                "f1": results[name]["f1"][i],
+                "pr_auc": results[name]["pr_auc"][i],
+            })
+    out_df = pd.DataFrame(out_rows)
+    out_df.to_csv(f"{METRICS_DIR}/concept_drift_results.csv", index=False)
+    print(f"\nSaved results to {METRICS_DIR}/concept_drift_results.csv")
+
+    plt.figure(figsize=(8, 5))
+    for name in models:
+        plt.plot(DRIFT_LEVELS, results[name]["f1"], marker="o", label=name)
+    plt.xlabel("Drift magnitude (fraction of feature std dev, fixed direction)")
+    plt.ylabel("F1 score (Attack class)")
+    plt.title("Model Performance Degradation Under Simulated Concept Drift")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(f"{PLOT_DIR}/concept_drift_f1.png", dpi=150)
+    print(f"Saved plot to {PLOT_DIR}/concept_drift_f1.png")
+
+    plt.figure(figsize=(8, 5))
+    for name in models:
+        plt.plot(DRIFT_LEVELS, results[name]["pr_auc"], marker="o", label=name)
+    plt.xlabel("Drift magnitude (fraction of feature std dev, fixed direction)")
+    plt.ylabel("Precision-Recall AUC")
+    plt.title("PR-AUC Degradation Under Simulated Concept Drift")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(f"{PLOT_DIR}/concept_drift_prauc.png", dpi=150)
+    print(f"Saved plot to {PLOT_DIR}/concept_drift_prauc.png")
+
+
 if __name__ == "__main__":
     run_noise_injection_test()
     run_label_noise_test()
+    run_concept_drift_test()
+
