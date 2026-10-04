@@ -1,5 +1,6 @@
 import glob
 import os
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -118,7 +119,6 @@ def main():
         stratify=y_binary,
     )
 
-    # Feature Scaling (Train only)
     scaler = StandardScaler()
     X_train_scaled = pd.DataFrame(
         scaler.fit_transform(X_train), columns=X_train.columns, index=X_train.index
@@ -132,6 +132,9 @@ def main():
     yb_test.to_csv(f"{PROCESSED_DIR}/y_test_binary.csv", index=False)
     ym_train.to_csv(f"{PROCESSED_DIR}/y_train_multiclass.csv", index=False)
     ym_test.to_csv(f"{PROCESSED_DIR}/y_test_multiclass.csv", index=False)
+
+    joblib.dump(scaler, f"{PROCESSED_DIR}/scaler.joblib")
+    joblib.dump(list(X_train.columns), f"{PROCESSED_DIR}/feature_columns.joblib")
 
     print(f"\nSaved processed data to {PROCESSED_DIR}/")
     print(f"Train shape: {X_train_scaled.shape}, Test shape: {X_test_scaled.shape}")
