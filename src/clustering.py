@@ -6,20 +6,27 @@
 # this would help us in robustness
 # once this file runs: k means precision/recall vs real labels and
 # isolation forest's precision/recall vs real labels
+#
+# metrics for BOTH classes (Benign and Attack), for each method alone and the
+# combined result, are saved to disk so demo.py can display them later
+# WITHOUT retraining anything
 
 import os
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.ensemble import IsolationForest
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    precision_recall_fscore_support,
+    accuracy_score,
+)
 
 PROCESSED_DIR = "data/processed"
 RANDOM_STATE = 42
 
-# Rough expected anomaly proportion in the data — adjust this based on the
-# actual binary class distribution printed during preprocessing.
-# Our data came out ~24.5% attack, so we set contamination close to that.
+# Rough expected anomaly proportion in the data — matches our actual ~24.5% attack ratio
 CONTAMINATION = 0.245
 
 
@@ -70,6 +77,28 @@ def evaluate_against_ground_truth(pseudo_labels: np.ndarray, y_true: pd.Series, 
     print(classification_report(y_true, pseudo_labels, target_names=["Benign", "Attack"]))
 
 
+def get_metrics_rows(y_true, y_pred, method_name: str) -> list:
+    """Extracts precision/recall/F1 for BOTH classes (Benign and Attack)
+    plus overall accuracy, as plain numbers - one row per class."""
+    precision, recall, f1, support = precision_recall_fscore_support(
+        y_true, y_pred, labels=[0, 1], average=None, zero_division=0
+    )
+    acc = accuracy_score(y_true, y_pred)
+
+    rows = []
+    for i, class_name in enumerate(["Benign", "Attack"]):
+        rows.append({
+            "method": method_name,
+            "class": class_name,
+            "precision": round(float(precision[i]), 4),
+            "recall": round(float(recall[i]), 4),
+            "f1": round(float(f1[i]), 4),
+            "support": int(support[i]),
+            "accuracy": round(float(acc), 4),
+        })
+    return rows
+
+
 def main():
     X_train, y_train_binary = load_processed()
     print(f"Loaded X_train: {X_train.shape}\n")
@@ -100,6 +129,18 @@ def main():
     filtered_true = y_train_binary[agreement_mask]
     filtered_pseudo = combined_labels[agreement_mask]
     evaluate_against_ground_truth(filtered_pseudo, filtered_true, "Agreement-filtered subset")
+
+
+    metrics_rows = []
+    metrics_rows += get_metrics_rows(y_train_binary, km_labels, "K-Means (alone)")
+    metrics_rows += get_metrics_rows(y_train_binary, iso_labels, "Isolation Forest (alone)")
+    metrics_rows += get_metrics_rows(filtered_true, filtered_pseudo, "Combined (agreement-filtered)")
+
+    metrics_df = pd.DataFrame(metrics_rows)
+    metrics_df.to_csv(f"{PROCESSED_DIR}/clustering_metrics.csv", index=False)
+    print(f"\nSaved clustering metrics to {PROCESSED_DIR}/clustering_metrics.csv")
+    print(metrics_df.to_string(index=False))
+
 
     out = pd.DataFrame({
         "kmeans_label": km_labels,
